@@ -9,6 +9,8 @@ const { Pool } = require('pg')
 const app = express()
 const PORT = process.env.PORT || 5000
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
+const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/$/, '')
+const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY
 const sslRootCertPath = process.env.SSL_ROOT_CERT
   ? path.resolve(__dirname, process.env.SSL_ROOT_CERT)
   : path.join(__dirname, 'supabase-root.crt')
@@ -33,6 +35,56 @@ const pool = new Pool({
 
 app.use(cors({ origin: FRONTEND_URL }))
 app.use(express.json({ limit: '100kb' }))
+
+async function requireSignedInUser(req, res, next) {
+  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+    return res.status(503).json({ error: 'Server-side Supabase Auth is not configured.' })
+  }
+
+  const authorization = req.get('authorization') || ''
+  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1]
+  if (!token) return res.status(401).json({ error: 'Sign in is required.' })
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+        authorization: `Bearer ${token}`
+      }
+    })
+    if (response.status === 401 || response.status === 403) {
+      return res.status(401).json({ error: 'Your sign-in has expired. Please sign in again.' })
+    }
+    if (!response.ok) {
+      return res.status(502).json({ error: 'Could not verify your sign-in with Supabase.' })
+    }
+
+    req.authUser = await response.json()
+    next()
+  } catch (error) {
+    next(error)
+  }
+}
+
+async function requireAdmin(req, res, next) {
+  try {
+    const result = await pool.query(
+      'SELECT 1 FROM public.app_admins WHERE user_id = $1',
+      [req.authUser.id]
+    )
+    if (result.rowCount === 0) return res.status(403).json({ error: 'Administrator access is required.' })
+    next()
+  } catch (error) {
+    next(error)
+  }
+}
+
+async function requireAdminAccess(req, res, next) {
+  await requireSignedInUser(req, res, (error) => {
+    if (error) return next(error)
+    return requireAdmin(req, res, next)
+  })
+}
 
 const CHARACTER_SELECT = `
   SELECT
@@ -222,6 +274,18 @@ app.get('/api/health', async (req, res, next) => {
   }
 })
 
+app.get('/api/auth/me', requireSignedInUser, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      'SELECT 1 FROM public.app_admins WHERE user_id = $1',
+      [req.authUser.id]
+    )
+    res.json({ isAdmin: result.rowCount > 0 })
+  } catch (error) {
+    next(error)
+  }
+})
+
 // The full source dataset uses its own IDs and table so it cannot overwrite
 // the manually curated records in public.characters.
 app.get('/api/universe/characters', async (req, res, next) => {
@@ -282,7 +346,7 @@ app.get('/api/marvel/characters/:id', async (req, res, next) => {
   }
 })
 
-app.post('/api/marvel/characters', async (req, res, next) => {
+app.post('/api/marvel/characters', requireAdminAccess, async (req, res, next) => {
   const { errors, values } = validateCharacter(req.body, true)
   if (errors.length) return res.status(400).json({ error: 'Please check the character details.', details: errors })
 
@@ -304,7 +368,7 @@ app.post('/api/marvel/characters', async (req, res, next) => {
   }
 })
 
-app.put('/api/marvel/characters/:id', async (req, res, next) => {
+app.put('/api/marvel/characters/:id', requireAdminAccess, async (req, res, next) => {
   const id = parseId(req.params.id)
   if (id === null) return res.status(400).json({ error: 'Character id must be a positive whole number.' })
 
@@ -333,7 +397,7 @@ app.put('/api/marvel/characters/:id', async (req, res, next) => {
   }
 })
 
-app.delete('/api/marvel/characters/:id', async (req, res, next) => {
+app.delete('/api/marvel/characters/:id', requireAdminAccess, async (req, res, next) => {
   const id = parseId(req.params.id)
   if (id === null) return res.status(400).json({ error: 'Character id must be a positive whole number.' })
 
