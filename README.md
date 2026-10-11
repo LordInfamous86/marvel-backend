@@ -31,7 +31,17 @@ Run `database-migration-favorites.sql` in the Supabase SQL Editor. It creates a 
 
 The certificate lets the API verify its connection to Supabase. The database password stays on the Express server; the browser never receives it. Keep `.env` private and do not upload it.
 
-The schema enables Row Level Security (RLS) on the public tables. This app sends browser requests to Express, which connects to Postgres with the private server-side connection string. The `postgres` role bypasses RLS, so RLS does not secure the Express write routes by itself. Before making the API public, add authentication/authorization to those routes or use a restricted database role.
+The schema enables Row Level Security (RLS) on the public tables. This app sends browser requests to Express, which connects to Postgres with the private server-side connection string. The `postgres` role bypasses RLS, so RLS does not secure Express routes by itself. The admin migration and backend Auth settings are required: Express verifies each access token with Supabase Auth and checks the verified user ID against `app_admins` before any character write.
+
+## Admin access
+
+Run `database-migration-admins.sql` in the Supabase SQL Editor. Copy `SUPABASE_URL` and the project's publishable key from the Supabase API settings into the backend `.env` file. The API uses those values to ask Supabase Auth to verify each access token; it never trusts a role supplied by the browser. Add your signed-in account as an admin by running this query in the SQL Editor, replacing the email with the email used for your app account:
+
+    INSERT INTO public.app_admins (user_id)
+    SELECT id FROM auth.users WHERE lower(email) = lower('YOUR_SIGN_IN_EMAIL')
+    ON CONFLICT (user_id) DO NOTHING;
+
+The backend checks the verified user's ID against `app_admins` before it allows character creation, editing, or deletion. Row Level Security is enabled on the admin table with no browser policies, so ordinary frontend requests cannot read or modify the allowlist directly.
 
 ## Data model
 
