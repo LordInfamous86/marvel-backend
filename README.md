@@ -53,10 +53,19 @@ The join tables let a character have multiple powers or teams, while the same po
 
 ## Run locally
 
-Install dependencies and start the API from this folder:
+1. Copy the example environment file:
 
-    npm install
-    npm run dev
+   ```sh
+   cp .env.example .env
+   ```
+
+2. Edit `.env` and provide your Supabase `DATABASE_URL`, `SUPABASE_URL`, and `SUPABASE_PUBLISHABLE_KEY`. Set `FRONTEND_URL` to the frontend origin, usually `http://localhost:5173`. Follow the database setup above to configure the SSL root certificate.
+3. Install dependencies and start the API from this folder:
+
+   ```sh
+   npm install
+   npm run dev
+   ```
 
 The API listens at http://localhost:5000. Check the database connection at http://localhost:5000/api/health.
 
